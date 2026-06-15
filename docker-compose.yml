@@ -1,0 +1,143 @@
+# ==============================================================================
+# TrueBuild Integration Platform — Docker Compose
+# ==============================================================================
+# Full stack: API + Celery Worker + Celery Beat + PostgreSQL + Redis + Nginx
+# ==============================================================================
+
+version: "3.9"
+
+services:
+  # ── PostgreSQL Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: truebuild-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: truebuild_sync
+      POSTGRES_USER: truebuild
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-truebuild_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truebuild -d truebuild_sync"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: truebuild-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Application ──────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truebuild-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://truebuild:${DB_PASSWORD:-truebuild_password}@postgres:5432/truebuild_sync
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Celery Worker ────────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truebuild-celery-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://truebuild:${DB_PASSWORD:-truebuild_password}@postgres:5432/truebuild_sync
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command: >
+      celery -A app.tasks.celery_app:celery_app worker
+      --loglevel=info
+      --concurrency=4
+      -Q default,product_sync,order_sync,inventory_sync,retry
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery Beat Scheduler ───────────────────────────────────────────────
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: truebuild-celery-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://truebuild:${DB_PASSWORD:-truebuild_password}@postgres:5432/truebuild_sync
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    command: >
+      celery -A app.tasks.celery_app:celery_app beat
+      --loglevel=info
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Nginx Reverse Proxy ─────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: truebuild-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

@@ -1,0 +1,41 @@
+# ==============================================================================
+# TrueBuild Integration Platform — Python Dependencies
+# ==============================================================================
+
+# Core Framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+starlette==0.41.3
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.14.0
+psycopg2-binary==2.9.10
+
+# Validation & Settings
+pydantic==2.10.3
+pydantic-settings==2.7.0
+pydantic[email]==2.10.3
+
+# Task Queue
+celery[redis]==5.4.0
+redis==5.2.1
+
+# HTTP Client
+httpx==0.28.1
+
+# Logging
+structlog==24.4.0
+
+# Environment
+python-dotenv==1.0.1
+
+# Security
+cryptography==44.0.0
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+pytest-cov==6.0.0
+pytest-mock==3.14.0
+httpx==0.28.1

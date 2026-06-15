@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.eggs
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/*.log
+
+# Database
+*.db
+*.sqlite3
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+test.db
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Alembic
+alembic/versions/*.pyc
