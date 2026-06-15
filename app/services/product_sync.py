@@ -393,12 +393,18 @@ class ProductSyncService:
         if weight:
             data["weight"] = str(weight)
 
-        # Barcode as meta_data
+        # Meta data (Barcode & Cost)
+        meta_data = []
         barcode = odoo_product.get("barcode")
         if barcode:
-            data["meta_data"] = [
-                {"key": "barcode", "value": barcode},
-            ]
+            meta_data.append({"key": "barcode", "value": barcode})
+            
+        cost = odoo_product.get("standard_price")
+        if cost is not None:
+            meta_data.append({"key": "_wc_cog_cost", "value": str(cost)})
+            
+        if meta_data:
+            data["meta_data"] = meta_data
 
         # Image and Gallery Images (Odoo template image + product.image gallery)
         image_data = odoo_product.get("image_1920")

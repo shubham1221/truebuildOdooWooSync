@@ -161,6 +161,13 @@ class VariantSyncService:
             "attributes": attribute_values,
         }
 
+        # Add cost (standard_price) as meta_data for variations
+        cost = variant_data.get("standard_price")
+        if cost is not None:
+            woo_variation_data["meta_data"] = [
+                {"key": "_wc_cog_cost", "value": str(cost)}
+            ]
+
         # Add weight if available
         weight = variant_data.get("weight")
         if weight:
