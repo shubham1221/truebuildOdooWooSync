@@ -1,0 +1,36 @@
+# ==============================================================================
+# TrueBuild Integration Platform — Docker Ignore
+# ==============================================================================
+
+# Git
+.git/
+.gitignore
+
+# Environment & Secrets
+.env
+.env.example
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Dev/Test Helper Scripts
+test_order_creation.py
+list_odoo_products.py
+list_odoo_variants.py
+
+# Tests
+tests/
+pytest.ini
+
+# Logs & Database
+logs/
+*.log
+*.db

@@ -400,16 +400,37 @@ class ProductSyncService:
                 {"key": "barcode", "value": barcode},
             ]
 
-        # Image (base64 from Odoo → WooCommerce external URL or direct upload)
+        # Image and Gallery Images (Odoo template image + product.image gallery)
         image_data = odoo_product.get("image_1920")
+        images_list = []
+        odoo_id = odoo_product["id"]
+
         if image_data:
-            # WooCommerce can accept images via src URL.
-            # For Odoo Online, we can construct the image URL.
-            odoo_id = odoo_product["id"]
-            image_url = (
-                f"{self.odoo.url}/web/image/product.template/{odoo_id}/image_1920"
+            image_url = f"{self.odoo.url}/web/image/product.template/{odoo_id}/image_1920"
+            images_list.append({"src": image_url, "name": data["name"]})
+
+        # Fetch additional gallery images from Odoo's product.image model
+        try:
+            extra_images = self.odoo.search_read(
+                "product.image",
+                [["product_tmpl_id", "=", odoo_id]],
+                fields=["id", "name"],
+                limit=10,
             )
-            data["images"] = [{"src": image_url, "name": data["name"]}]
+            for img in extra_images:
+                img_id = img["id"]
+                img_name = img.get("name") or f"{data['name']} Extra"
+                img_url = f"{self.odoo.url}/web/image/product.image/{img_id}/image_1920"
+                images_list.append({"src": img_url, "name": img_name})
+        except Exception as e:
+            logger.warning(
+                "failed_fetching_odoo_gallery_images",
+                odoo_id=odoo_id,
+                error=str(e),
+            )
+
+        if images_list:
+            data["images"] = images_list
 
         # Attributes (for variable products)
         if product_type == "variable":
