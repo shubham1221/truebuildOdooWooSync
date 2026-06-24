@@ -20,7 +20,7 @@ from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+router = APIRouter(prefix="/webhooks/woocommerce", tags=["Webhooks"])
 
 
 async def _validate_and_parse(

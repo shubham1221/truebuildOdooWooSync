@@ -38,10 +38,12 @@ class VariantSyncService:
         odoo: OdooClient,
         woo: WooCommerceClient,
         db: Session,
+        pricelist_helper: Any | None = None,
     ) -> None:
         self.odoo = odoo
         self.woo = woo
         self.db = db
+        self.pricelist_helper = pricelist_helper
         self.variant_repo = VariantMappingRepository(db)
         self.sync_log_repo = SyncLogRepository(db)
 
@@ -82,6 +84,7 @@ class VariantSyncService:
                         variant_data=variant_data,
                         woo_product_id=woo_product_id,
                         product_mapping_id=product_mapping_id,
+                        odoo_template_id=odoo_template_id,
                     )
                     if result == "synced":
                         counts["synced"] += 1
@@ -125,6 +128,7 @@ class VariantSyncService:
         variant_data: dict[str, Any],
         woo_product_id: int,
         product_mapping_id: int,
+        odoo_template_id: int | None = None,
     ) -> str:
         """
         Sync a single variant to WooCommerce.
@@ -152,10 +156,29 @@ class VariantSyncService:
         # Build variant attribute values
         attribute_values = self._build_attribute_values(variant_data)
 
+        # Resolve pricelist price for variant
+        base_price = float(variant_data.get("lst_price", 0.0))
+        tmpl_id = None
+        tmpl_val = variant_data.get("product_tmpl_id")
+        if isinstance(tmpl_val, (list, tuple)) and len(tmpl_val) > 0:
+            tmpl_id = tmpl_val[0]
+        if not tmpl_id:
+            tmpl_id = odoo_template_id
+
+        categ_id_val = variant_data.get("categ_id")
+        category_id = None
+        if isinstance(categ_id_val, (list, tuple)) and len(categ_id_val) > 0:
+            category_id = categ_id_val[0]
+
+        if self.pricelist_helper and tmpl_id:
+            price = self.pricelist_helper.get_price(tmpl_id, odoo_variant_id, base_price, category_id)
+        else:
+            price = base_price
+
         # Build WooCommerce variation data
         woo_variation_data: dict[str, Any] = {
             "sku": sku,
-            "regular_price": str(variant_data.get("lst_price", 0.0)),
+            "regular_price": str(price),
             "manage_stock": True,
             "stock_quantity": int(variant_data.get("qty_available", 0)),
             "attributes": attribute_values,
@@ -173,11 +196,15 @@ class VariantSyncService:
         if weight:
             woo_variation_data["weight"] = str(weight)
 
-        # Check existing mapping
+        # Check existing mapping (by Odoo ID, which maps to SKU)
         existing = self.variant_repo.get_by_odoo_id(odoo_variant_id)
 
+        # Also check by SKU in case mapping is missing but variant exists
+        if not existing:
+            existing = self.variant_repo.get_by_sku(sku)
+
         if existing and existing.woo_variant_id:
-            # Update existing variation
+            # Update existing variation (matched by SKU mapping)
             self.woo.update_variation(
                 woo_product_id, existing.woo_variant_id, woo_variation_data
             )
@@ -191,25 +218,56 @@ class VariantSyncService:
                 woo_variation_id=existing.woo_variant_id,
             )
         else:
-            # Create new variation
-            woo_variation = self.woo.create_variation(woo_product_id, woo_variation_data)
-            woo_variant_id = woo_variation["id"]
-
-            if existing:
-                self.variant_repo.mark_synced(existing, woo_variant_id)
-            else:
-                self.variant_repo.create(
-                    product_mapping_id=product_mapping_id,
-                    odoo_variant_id=odoo_variant_id,
-                    sku=sku,
-                    woo_variant_id=woo_variant_id,
-                    sync_status=SyncStatus.SYNCED,
-                )
-            logger.info(
-                "variant_created",
-                sku=sku,
-                woo_variation_id=woo_variant_id,
+            # No local mapping — check WooCommerce variations by SKU
+            # to prevent duplicates and ensure SKU-only matching
+            existing_woo_variation = self._find_woo_variation_by_sku(
+                woo_product_id, sku
             )
+
+            if existing_woo_variation:
+                # Variation with this SKU already exists in WooCommerce — update it
+                woo_variant_id = existing_woo_variation["id"]
+                self.woo.update_variation(
+                    woo_product_id, woo_variant_id, woo_variation_data
+                )
+
+                logger.info(
+                    "variant_found_in_woo_by_sku",
+                    sku=sku,
+                    woo_variation_id=woo_variant_id,
+                    message="Variation matched by SKU in WooCommerce — updating instead of creating",
+                )
+
+                if existing:
+                    self.variant_repo.mark_synced(existing, woo_variant_id)
+                else:
+                    self.variant_repo.create(
+                        product_mapping_id=product_mapping_id,
+                        odoo_variant_id=odoo_variant_id,
+                        sku=sku,
+                        woo_variant_id=woo_variant_id,
+                        sync_status=SyncStatus.SYNCED,
+                    )
+            else:
+                # No variation with this SKU in WooCommerce — create new
+                woo_variation = self.woo.create_variation(woo_product_id, woo_variation_data)
+                woo_variant_id = woo_variation["id"]
+
+                if existing:
+                    self.variant_repo.mark_synced(existing, woo_variant_id)
+                else:
+                    self.variant_repo.create(
+                        product_mapping_id=product_mapping_id,
+                        odoo_variant_id=odoo_variant_id,
+                        sku=sku,
+                        woo_variant_id=woo_variant_id,
+                        sync_status=SyncStatus.SYNCED,
+                    )
+                logger.info(
+                    "variant_created",
+                    sku=sku,
+                    woo_variation_id=woo_variant_id,
+                )
 
         self.sync_log_repo.log_success(
             event_type="variant_sync",
@@ -218,6 +276,31 @@ class VariantSyncService:
             message=f"Variant synced: {sku}",
         )
         return "synced"
+
+    def _find_woo_variation_by_sku(
+        self,
+        woo_product_id: int,
+        sku: str,
+    ) -> dict[str, Any] | None:
+        """
+        Find an existing WooCommerce variation by SKU within a product.
+
+        Iterates through all variations of the product to find one matching
+        the given SKU. Returns the variation dict if found, else None.
+        """
+        try:
+            variations = self.woo.list_variations(woo_product_id)
+            for variation in variations:
+                if variation.get("sku") == sku:
+                    return variation
+        except Exception as e:
+            logger.warning(
+                "woo_variation_sku_lookup_error",
+                woo_product_id=woo_product_id,
+                sku=sku,
+                error=str(e),
+            )
+        return None
 
     def _build_attribute_values(
         self,

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     ODOO_USERNAME: str = Field(..., description="Odoo user email for XML-RPC")
     ODOO_PASSWORD: str = Field(..., description="Odoo API password (set via Change Password)")
     ODOO_TIMEOUT: int = Field(default=30, description="XML-RPC call timeout in seconds")
+    ODOO_PRICELIST_ID: int = Field(default=5, description="Odoo pricelist ID to use for WooCommerce prices")
 
     # ── WooCommerce ──────────────────────────────────────────────────────
     WOO_URL: str = Field(..., description="WooCommerce store URL, e.g. https://truebuild.com.au")

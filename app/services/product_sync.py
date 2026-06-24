@@ -29,6 +29,129 @@ from app.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+
+class OdooPricelistHelper:
+    """
+    Helper to fetch and calculate pricing using Odoo's pricelists.
+    Fetches and caches all fixed/discount rules of a specific pricelist to
+    allow rapid O(1) price resolution during product sync runs.
+    """
+
+    def __init__(self, odoo_client: OdooClient, pricelist_id: int) -> None:
+        self.odoo = odoo_client
+        self.pricelist_id = pricelist_id
+        self.variant_rules: dict[int, dict[str, Any]] = {}
+        self.template_rules: dict[int, dict[str, Any]] = {}
+        self.category_rules: dict[int, dict[str, Any]] = {}
+        self.global_rule: dict[str, Any] | None = None
+        self.is_loaded = False
+
+    def load(self) -> None:
+        """Fetch all items from the configured Odoo pricelist."""
+        if self.is_loaded:
+            return
+
+        try:
+            logger.info("loading_odoo_pricelist_items", pricelist_id=self.pricelist_id)
+            items = self.odoo.search_read(
+                "product.pricelist.item",
+                [["pricelist_id", "=", self.pricelist_id]],
+                fields=[
+                    "id",
+                    "applied_on",
+                    "product_tmpl_id",
+                    "product_id",
+                    "categ_id",
+                    "compute_price",
+                    "fixed_price",
+                    "percent_price",
+                    "price_discount",
+                    "price_surcharge",
+                    "base",
+                ],
+                limit=10000,
+            )
+
+            for item in items:
+                applied_on = item.get("applied_on")
+                if applied_on == "0_product_variant":
+                    pid = item.get("product_id")
+                    if pid and isinstance(pid, (list, tuple)) and len(pid) > 0:
+                        self.variant_rules[pid[0]] = item
+                elif applied_on == "1_product":
+                    tmpl_id = item.get("product_tmpl_id")
+                    if tmpl_id and isinstance(tmpl_id, (list, tuple)) and len(tmpl_id) > 0:
+                        self.template_rules[tmpl_id[0]] = item
+                elif applied_on == "2_product_category":
+                    cat_id = item.get("categ_id")
+                    if cat_id and isinstance(cat_id, (list, tuple)) and len(cat_id) > 0:
+                        self.category_rules[cat_id[0]] = item
+                elif applied_on == "3_global":
+                    self.global_rule = item
+
+            self.is_loaded = True
+            logger.info(
+                "odoo_pricelist_items_loaded",
+                pricelist_id=self.pricelist_id,
+                variant_rules_count=len(self.variant_rules),
+                template_rules_count=len(self.template_rules),
+                category_rules_count=len(self.category_rules),
+                has_global_rule=self.global_rule is not None,
+            )
+        except Exception as e:
+            logger.error(
+                "failed_loading_pricelist_items",
+                pricelist_id=self.pricelist_id,
+                error=str(e),
+            )
+            # Keep is_loaded False so it falls back to standard base price
+
+    def get_price(
+        self,
+        product_tmpl_id: int,
+        product_id: int | None,
+        base_price: float,
+        category_id: int | None = None,
+    ) -> float:
+        """
+        Resolve the pricelist price for a given template and variant.
+        Falls back to base_price if no rules apply or loading failed.
+        """
+        if not self.is_loaded:
+            return base_price
+
+        # 1. Match specific variant rule
+        if product_id is not None and product_id in self.variant_rules:
+            return self._calculate_item_price(self.variant_rules[product_id], base_price)
+
+        # 2. Match template rule
+        if product_tmpl_id in self.template_rules:
+            return self._calculate_item_price(self.template_rules[product_tmpl_id], base_price)
+
+        # 3. Match category rule
+        if category_id is not None and category_id in self.category_rules:
+            return self._calculate_item_price(self.category_rules[category_id], base_price)
+
+        # 4. Match global rule
+        if self.global_rule is not None:
+            return self._calculate_item_price(self.global_rule, base_price)
+
+        return base_price
+
+    def _calculate_item_price(self, item: dict[str, Any], base_price: float) -> float:
+        compute_price = item.get("compute_price", "fixed")
+        if compute_price == "fixed":
+            return float(item.get("fixed_price", 0.0))
+        elif compute_price == "percentage":
+            percent = float(item.get("percent_price", 0.0))
+            return base_price * (1.0 - percent / 100.0)
+        elif compute_price == "formula":
+            discount = float(item.get("price_discount", 0.0))
+            surcharge = float(item.get("price_surcharge", 0.0))
+            return base_price * (1.0 - discount / 100.0) + surcharge
+        return base_price
+
+
 class ProductSyncService:
     """
     Orchestrates full product synchronization from Odoo to WooCommerce.
@@ -55,10 +178,11 @@ class ProductSyncService:
         self.woo = woo
         self.db = db
         self.settings = get_settings()
+        self.pricelist_helper = OdooPricelistHelper(self.odoo, self.settings.ODOO_PRICELIST_ID)
         self.product_repo = ProductMappingRepository(db)
         self.sync_log_repo = SyncLogRepository(db)
         self.failed_job_repo = FailedJobRepository(db)
-        self.variant_sync = VariantSyncService(odoo, woo, db)
+        self.variant_sync = VariantSyncService(odoo, woo, db, pricelist_helper=self.pricelist_helper)
 
         # Cache for WooCommerce categories to avoid repeated lookups
         self._category_cache: dict[str, int] = {}
@@ -78,6 +202,9 @@ class ProductSyncService:
         logger.info("product_sync_all_started")
 
         try:
+            # Load pricelist rules before starting full sync
+            self.pricelist_helper.load()
+
             # Fetch all storable/consumable products from Odoo
             offset = 0
             batch_size = self.settings.SYNC_BATCH_SIZE
@@ -140,6 +267,9 @@ class ProductSyncService:
         """
         logger.info("product_sync_single_started", sku=sku)
 
+        # Load pricelist rules before single product sync
+        self.pricelist_helper.load()
+
         # Find the product in Odoo by SKU
         odoo_products = self.odoo.search_read(
             "product.template",
@@ -184,6 +314,26 @@ class ProductSyncService:
         sku = odoo_product.get("default_code", "")
         name = odoo_product.get("name", "")
 
+        # If SKU is empty but has variants, derive parent SKU from variants
+        if not sku and odoo_product.get("product_variant_count", 1) > 1:
+            try:
+                odoo_variants = self.odoo.get_product_variants(odoo_id)
+                if odoo_variants:
+                    sku = self._get_parent_sku_from_variants(odoo_variants)
+                    if sku:
+                        logger.info(
+                            "derived_parent_sku_from_variants",
+                            odoo_id=odoo_id,
+                            derived_sku=sku,
+                            message=f"Derived parent SKU '{sku}' from variants for product '{name}'"
+                        )
+            except Exception as e:
+                logger.warning(
+                    "failed_deriving_parent_sku",
+                    odoo_id=odoo_id,
+                    error=str(e)
+                )
+
         # ── Validate SKU ─────────────────────────────────────────────
         if not sku:
             logger.error(
@@ -211,7 +361,7 @@ class ProductSyncService:
             product_type = "variable" if is_variable else "simple"
 
             # ── Build WooCommerce data ───────────────────────────────
-            woo_data = self._build_woo_product_data(odoo_product, product_type)
+            woo_data = self._build_woo_product_data(odoo_product, product_type, sku)
 
             # ── Handle category ──────────────────────────────────────
             category_name = self._get_category_name(odoo_product)
@@ -220,36 +370,90 @@ class ProductSyncService:
                 if woo_cat_id:
                     woo_data["categories"] = [{"id": woo_cat_id}]
 
-            # ── Check existing mapping ───────────────────────────────
-            existing_mapping = self.product_repo.get_by_sku(sku)
+            # ── Check existing mapping by Odoo ID or SKU ─────────────
+            existing_mapping = self.product_repo.get_by_odoo_id(odoo_id)
+            if not existing_mapping:
+                existing_mapping = self.product_repo.get_by_sku(sku)
+
+            if existing_mapping:
+                # Ensure the mapping has the correct SKU and Odoo ID
+                if existing_mapping.sku != sku:
+                    existing_mapping.sku = sku
+                if existing_mapping.odoo_product_id != odoo_id:
+                    existing_mapping.odoo_product_id = odoo_id
+
+            woo_product_id = None
+            action = None
 
             if existing_mapping and existing_mapping.woo_product_id:
                 # UPDATE existing WooCommerce product
-                self.woo.update_product(existing_mapping.woo_product_id, woo_data)
-                woo_product_id = existing_mapping.woo_product_id
-                self.product_repo.update(
-                    existing_mapping,
-                    sync_status=SyncStatus.SYNCED,
-                    product_type=product_type,
-                )
-                action = "updated"
-            else:
-                # CREATE new WooCommerce product
-                woo_result = self.woo.create_product(woo_data)
-                woo_product_id = woo_result["id"]
-
-                if existing_mapping:
-                    self.product_repo.mark_synced(existing_mapping, woo_product_id)
-                    existing_mapping.product_type = product_type
-                else:
-                    self.product_repo.create(
-                        odoo_product_id=odoo_id,
-                        sku=sku,
-                        woo_product_id=woo_product_id,
-                        product_type=product_type,
+                try:
+                    self.woo.update_product(existing_mapping.woo_product_id, woo_data)
+                    woo_product_id = existing_mapping.woo_product_id
+                    self.product_repo.update(
+                        existing_mapping,
                         sync_status=SyncStatus.SYNCED,
+                        product_type=product_type,
                     )
-                action = "created"
+                    action = "updated"
+                except WooCommerceAPIError as e:
+                    if e.status_code in (400, 404) and ("Invalid ID" in str(e) or "not found" in str(e).lower()):
+                        logger.warning(
+                            "woo_product_not_found_on_update",
+                            woo_id=existing_mapping.woo_product_id,
+                            sku=sku,
+                            message="WooCommerce product deleted or not found — clearing mapping and creating new"
+                        )
+                        self.product_repo.delete(existing_mapping)
+                        existing_mapping = None
+                    else:
+                        raise
+
+            if not existing_mapping or not woo_product_id:
+                # No local mapping (or invalid mapping) — check WooCommerce by SKU before creating
+                existing_woo_product = self.woo.get_product_by_sku(sku)
+
+                if existing_woo_product:
+                    # Product already exists in WooCommerce with this SKU — update it
+                    woo_product_id = existing_woo_product["id"]
+                    self.woo.update_product(woo_product_id, woo_data)
+
+                    logger.info(
+                        "product_found_in_woo_by_sku",
+                        sku=sku,
+                        woo_id=woo_product_id,
+                        message="Product matched by SKU in WooCommerce — updating instead of creating",
+                    )
+
+                    if existing_mapping:
+                        self.product_repo.mark_synced(existing_mapping, woo_product_id)
+                        existing_mapping.product_type = product_type
+                    else:
+                        self.product_repo.create(
+                            odoo_product_id=odoo_id,
+                            sku=sku,
+                            woo_product_id=woo_product_id,
+                            product_type=product_type,
+                            sync_status=SyncStatus.SYNCED,
+                        )
+                    action = "updated"
+                else:
+                    # No product with this SKU in WooCommerce — create new
+                    woo_result = self.woo.create_product(woo_data)
+                    woo_product_id = woo_result["id"]
+
+                    if existing_mapping:
+                        self.product_repo.mark_synced(existing_mapping, woo_product_id)
+                        existing_mapping.product_type = product_type
+                    else:
+                        self.product_repo.create(
+                            odoo_product_id=odoo_id,
+                            sku=sku,
+                            woo_product_id=woo_product_id,
+                            product_type=product_type,
+                            sync_status=SyncStatus.SYNCED,
+                        )
+                    action = "created"
 
             # ── Sync variants if variable product ────────────────────
             variants_synced = 0
@@ -360,19 +564,40 @@ class ProductSyncService:
         self,
         odoo_product: dict[str, Any],
         product_type: str,
+        sku: str,
     ) -> dict[str, Any]:
         """Build WooCommerce product data dict from Odoo product."""
+        # Resolve pricelist price for templates and simple products
+        base_price = float(odoo_product.get("list_price", 0.0))
+        tmpl_id = odoo_product["id"]
+
+        # Get category ID if available
+        categ_id_val = odoo_product.get("categ_id")
+        category_id = None
+        if isinstance(categ_id_val, (list, tuple)) and len(categ_id_val) > 0:
+            category_id = categ_id_val[0]
+
+        # Get variant ID if simple product
+        variant_id = None
+        variant_ids = odoo_product.get("product_variant_ids", [])
+        if variant_ids and isinstance(variant_ids, list) and len(variant_ids) > 0:
+            variant_id = variant_ids[0]
+
+        price = self.pricelist_helper.get_price(tmpl_id, variant_id, base_price, category_id)
+
         data: dict[str, Any] = {
             "name": odoo_product.get("name", ""),
             "type": product_type,
-            "sku": odoo_product.get("default_code", ""),
-            "regular_price": str(odoo_product.get("list_price", 0.0)),
+            "sku": sku,
+            "regular_price": str(price),
             "description": odoo_product.get("description") or "",
             "short_description": odoo_product.get("description_sale") or "",
-            "manage_stock": True,
+            "manage_stock": False if product_type == "variable" else True,
             "tax_class": self.settings.GST_TAX_CLASS,
             "status": "publish",
         }
+        if product_type == "variable":
+            data["stock_status"] = "instock"
 
         # Stock quantity (for simple products)
         if product_type == "simple":
@@ -412,7 +637,7 @@ class ProductSyncService:
         odoo_id = odoo_product["id"]
 
         if image_data:
-            image_url = f"{self.odoo.url}/web/image/product.template/{odoo_id}/image_1920"
+            image_url = f"{self.odoo.url}/web/image/product.template/{odoo_id}/image_1920/image.jpg"
             images_list.append({"src": image_url, "name": data["name"]})
 
         # Fetch additional gallery images from Odoo's product.image model
@@ -426,7 +651,7 @@ class ProductSyncService:
             for img in extra_images:
                 img_id = img["id"]
                 img_name = img.get("name") or f"{data['name']} Extra"
-                img_url = f"{self.odoo.url}/web/image/product.image/{img_id}/image_1920"
+                img_url = f"{self.odoo.url}/web/image/product.image/{img_id}/image_1920/image.jpg"
                 images_list.append({"src": img_url, "name": img_name})
         except Exception as e:
             logger.warning(
@@ -491,3 +716,22 @@ class ProductSyncService:
                 error=str(e),
             )
             return None
+
+    def _get_parent_sku_from_variants(self, odoo_variants: list[dict[str, Any]]) -> str:
+        """
+        Derive a parent SKU from the SKUs of its child variants.
+        Finds the common prefix of variant SKUs, or splits the first SKU.
+        """
+        skus = [v.get("default_code") for v in odoo_variants if v.get("default_code")]
+        if not skus:
+            return ""
+        import os
+        common = os.path.commonprefix(skus)
+        common = common.rstrip("-_")
+        if len(common) < 3:
+            first_sku = skus[0]
+            if "-" in first_sku:
+                common = first_sku.rsplit("-", 1)[0]
+            else:
+                common = first_sku
+        return common

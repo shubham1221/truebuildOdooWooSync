@@ -88,10 +88,10 @@ curl http://localhost/health
 ### Webhooks (WooCommerce → Platform)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/webhooks/order-created` | New order webhook |
-| POST | `/webhooks/order-updated` | Order update webhook |
-| POST | `/webhooks/order-refunded` | Order refund webhook |
-| POST | `/webhooks/order-cancelled` | Order cancellation webhook |
+| POST | `/webhooks/woocommerce/order-created` | New order webhook |
+| POST | `/webhooks/woocommerce/order-updated` | Order update webhook |
+| POST | `/webhooks/woocommerce/order-refunded` | Order refund webhook |
+| POST | `/webhooks/woocommerce/order-cancelled` | Order cancellation webhook |
 
 ### Sync Management
 | Method | Endpoint | Description |
@@ -134,8 +134,8 @@ Create these webhooks:
 
 | Name | Topic | Delivery URL | Secret |
 |------|-------|-------------|--------|
-| Order Created | Order created | `https://your-domain/webhooks/order-created` | (same as WOO_WEBHOOK_SECRET) |
-| Order Updated | Order updated | `https://your-domain/webhooks/order-updated` | (same as WOO_WEBHOOK_SECRET) |
+| Order Created | Order created | `https://your-domain/webhooks/woocommerce/order-created` | (same as WOO_WEBHOOK_SECRET) |
+| Order Updated | Order updated | `https://your-domain/webhooks/woocommerce/order-updated` | (same as WOO_WEBHOOK_SECRET) |
 
 ---
 

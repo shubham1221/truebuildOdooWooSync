@@ -404,6 +404,8 @@ class OdooClient:
             "product_template_attribute_value_ids",
             "image_variant_1920",
             "active",
+            "product_tmpl_id",
+            "categ_id",
         ]
         return self.search_read(
             "product.product",

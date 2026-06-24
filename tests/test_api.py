@@ -74,7 +74,7 @@ class TestWebhookEndpoints:
     def test_webhook_no_signature_rejected(self, client):
         """Webhooks without signature should be rejected."""
         response = client.post(
-            "/webhooks/order-created",
+            "/webhooks/woocommerce/order-created",
             json={"id": 1234},
         )
         assert response.status_code == 401
@@ -82,7 +82,7 @@ class TestWebhookEndpoints:
     def test_webhook_invalid_signature_rejected(self, client):
         """Webhooks with invalid signature should be rejected."""
         response = client.post(
-            "/webhooks/order-created",
+            "/webhooks/woocommerce/order-created",
             json={"id": 1234},
             headers={"X-WC-Webhook-Signature": "invalid-signature"},
         )

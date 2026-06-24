@@ -82,6 +82,7 @@ def mock_woo() -> MagicMock:
     """Create a mock WooCommerce client."""
     woo = MagicMock()
     woo.url = "https://test.woocommerce.com"
+    woo.get_product_by_sku.return_value = None
     return woo
 
 
