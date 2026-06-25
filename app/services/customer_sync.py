@@ -319,6 +319,12 @@ class CustomerSyncService:
         if not name:
             name = address.company or "Address"
 
+        # Append suffix to differentiate child contacts in Odoo UI
+        if contact_type == "invoice":
+            name = f"{name} (Billing Contact)"
+        elif contact_type == "delivery":
+            name = f"{name} (Shipping Contact)"
+
         values: dict[str, Any] = {
             "parent_id": parent_id,
             "type": contact_type,
