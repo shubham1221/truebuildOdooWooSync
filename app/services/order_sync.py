@@ -30,7 +30,7 @@ from app.schemas.customer import CustomerData
 from app.schemas.order import OrderLineItem, OrderSyncData, OrderSyncResult
 from app.services.odoo_client import OdooClient, OdooAPIError
 from app.services.woo_client import WooCommerceClient, WooCommerceAPIError
-from app.services.customer_sync import CustomerSyncService
+from app.services.customer_sync import AddressData, CustomerSyncService, PartnerAddressResult
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -158,7 +158,7 @@ class OrderSyncService:
         woo_order_id = order_data.woo_order_id
 
         try:
-            # ── 1. Create/match customer ─────────────────────────────
+            # ── 1. Create/match customer with billing & shipping ─────
             customer_data = CustomerData(
                 email=order_data.billing_email,
                 first_name=order_data.billing_first_name,
@@ -172,7 +172,47 @@ class OrderSyncService:
                 postcode=order_data.billing_postcode,
                 country=order_data.billing_country,
             )
-            odoo_partner_id = self.customer_sync.get_or_create_partner(customer_data)
+
+            billing_address = AddressData(
+                first_name=order_data.billing_first_name,
+                last_name=order_data.billing_last_name,
+                company=order_data.billing_company,
+                address_1=order_data.billing_address_1,
+                address_2=order_data.billing_address_2,
+                city=order_data.billing_city,
+                state=order_data.billing_state,
+                postcode=order_data.billing_postcode,
+                country=order_data.billing_country,
+                email=order_data.billing_email,
+                phone=order_data.billing_phone,
+            )
+
+            shipping_address = AddressData(
+                first_name=order_data.shipping_first_name,
+                last_name=order_data.shipping_last_name,
+                company=order_data.shipping_company,
+                address_1=order_data.shipping_address_1,
+                address_2=order_data.shipping_address_2,
+                city=order_data.shipping_city,
+                state=order_data.shipping_state,
+                postcode=order_data.shipping_postcode,
+                country=order_data.shipping_country,
+            )
+
+            address_result: PartnerAddressResult = (
+                self.customer_sync.get_or_create_partner(
+                    customer_data,
+                    billing_address=billing_address,
+                    shipping_address=shipping_address,
+                )
+            )
+            logger.info(
+                "customer_addresses_resolved",
+                woo_order_id=woo_order_id,
+                partner_id=address_result.partner_id,
+                partner_invoice_id=address_result.partner_invoice_id,
+                partner_shipping_id=address_result.partner_shipping_id,
+            )
 
             # ── 2. Build order lines ─────────────────────────────────
             order_lines = self._build_order_lines(order_data.line_items)
@@ -185,7 +225,9 @@ class OrderSyncService:
 
             # ── 3. Create Sale Order in Odoo ─────────────────────────
             so_values: dict[str, Any] = {
-                "partner_id": odoo_partner_id,
+                "partner_id": address_result.partner_id,
+                "partner_invoice_id": address_result.partner_invoice_id,
+                "partner_shipping_id": address_result.partner_shipping_id,
                 "client_order_ref": f"WC-{order_data.order_number or woo_order_id}",
                 "note": order_data.customer_note or "",
                 "order_line": order_lines,
@@ -393,6 +435,7 @@ class OrderSyncService:
             billing_country=billing.get("country", "AU"),
             shipping_first_name=shipping.get("first_name", ""),
             shipping_last_name=shipping.get("last_name", ""),
+            shipping_company=shipping.get("company", ""),
             shipping_address_1=shipping.get("address_1", ""),
             shipping_address_2=shipping.get("address_2", ""),
             shipping_city=shipping.get("city", ""),

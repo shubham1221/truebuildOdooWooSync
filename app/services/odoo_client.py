@@ -457,10 +457,14 @@ class OdooClient:
         return self.create("res.partner", values)
 
     def find_partner_by_email(self, email: str) -> list[dict[str, Any]]:
-        """Find a partner by email address."""
+        """Find a parent partner (type=contact) by email address.
+
+        Filters to type='contact' to avoid matching billing/shipping
+        child contacts that may share the same email.
+        """
         return self.search_read(
             "res.partner",
-            [["email", "=", email.lower().strip()]],
+            [["email", "=", email.lower().strip()], ["type", "=", "contact"]],
             fields=["id", "name", "email", "phone", "street", "city", "state_id", "zip", "country_id"],
             limit=1,
         )
