@@ -209,6 +209,102 @@ def get_failed_jobs(
     return [FailedJobResponse.model_validate(job).model_dump() for job in jobs]
 
 
+@router.post("/update-webhooks")
+def update_woocommerce_webhooks(
+    woo: WooCommerceClient = Depends(get_woo_client),
+) -> dict[str, Any]:
+    """
+    Update all WooCommerce webhook delivery URLs to point to the VPS.
+
+    Call this ONCE after deployment to fix webhooks that still point to
+    the old subdomain (sync.truebuilddecks.com.au) or any wrong URL.
+
+    The correct delivery URLs will be:
+      - /webhooks/woocommerce/order-created
+      - /webhooks/woocommerce/order-updated
+      - /webhooks/woocommerce/order-cancelled
+      - /webhooks/woocommerce/order-refunded
+    """
+    from app.config.settings import get_settings
+    settings = get_settings()
+    base = settings.WEBHOOK_BASE_URL.rstrip("/")
+
+    # Map WooCommerce webhook topics to our endpoint paths
+    topic_to_path: dict[str, str] = {
+        "order.created":  "/webhooks/woocommerce/order-created",
+        "order.updated":  "/webhooks/woocommerce/order-updated",
+        "order.deleted":  "/webhooks/woocommerce/order-cancelled",
+    }
+
+    # Also handle any webhook whose delivery URL already contains our paths
+    # (catches renamed/custom webhooks)
+    path_keywords = ["/webhooks/woocommerce/order"]
+
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    try:
+        webhooks = woo.list_webhooks()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to list WooCommerce webhooks: {e}")
+
+    for wh in webhooks:
+        wh_id = wh.get("id")
+        topic = wh.get("topic", "")
+        current_url = wh.get("delivery_url", "")
+
+        # Determine if this webhook needs updating
+        new_path = topic_to_path.get(topic)
+        if not new_path:
+            # Try to match by existing path keyword
+            for kw in path_keywords:
+                if kw in current_url:
+                    # Preserve the original path suffix
+                    from urllib.parse import urlparse
+                    parsed = urlparse(current_url)
+                    new_path = parsed.path
+                    break
+
+        if not new_path:
+            continue  # Not one of our webhooks
+
+        new_url = f"{base}{new_path}"
+        if current_url == new_url:
+            results.append({"id": wh_id, "topic": topic, "status": "already_correct", "url": new_url})
+            continue
+
+        try:
+            woo.update_webhook(wh_id, {"delivery_url": new_url})
+            results.append({"id": wh_id, "topic": topic, "status": "updated", "old_url": current_url, "new_url": new_url})
+            logger.info("woo_webhook_url_updated", wh_id=wh_id, topic=topic, new_url=new_url)
+        except Exception as e:
+            errors.append(f"Webhook {wh_id} ({topic}): {e}")
+            results.append({"id": wh_id, "topic": topic, "status": "error", "error": str(e)})
+
+    # If no matching webhooks exist, create the three required ones
+    if not any(r["status"] in ("updated", "already_correct") for r in results):
+        for topic, path in topic_to_path.items():
+            try:
+                created = woo.create_webhook({
+                    "name": f"TrueBuild {topic.replace('.', ' ').title()}",
+                    "topic": topic,
+                    "delivery_url": f"{base}{path}",
+                    "secret": settings.WOO_WEBHOOK_SECRET,
+                    "status": "active",
+                })
+                results.append({"id": created.get("id"), "topic": topic, "status": "created", "url": f"{base}{path}"})
+                logger.info("woo_webhook_created_new", topic=topic, url=f"{base}{path}")
+            except Exception as e:
+                errors.append(f"Create webhook {topic}: {e}")
+
+    return {
+        "base_url": base,
+        "webhooks_processed": len(results),
+        "results": results,
+        "errors": errors,
+    }
+
+
 @router.post("/failed-jobs/{job_id}/retry")
 def retry_failed_job(
     job_id: int,

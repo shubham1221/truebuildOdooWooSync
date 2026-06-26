@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     WOO_TIMEOUT: int = Field(default=30, description="WooCommerce API timeout in seconds")
     WOO_VERIFY_SSL: bool = Field(default=True, description="Verify SSL for WooCommerce API")
 
+    # ── Webhook Delivery ─────────────────────────────────────────────────
+    # Public-facing base URL used when registering/updating WooCommerce webhooks.
+    # Must be reachable FROM the WooCommerce server (i.e. the VPS direct URL).
+    WEBHOOK_BASE_URL: str = Field(
+        default="http://srv1751227.hstgr.cloud:8000",
+        description="Base URL for WooCommerce webhook delivery (direct VPS URL)",
+    )
+
     # ── PostgreSQL ───────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
         ...,

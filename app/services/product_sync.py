@@ -589,7 +589,8 @@ class ProductSyncService:
             "name": odoo_product.get("name", ""),
             "type": product_type,
             "sku": sku,
-            "regular_price": str(price),
+            "regular_price": f"{price:.2f}",
+            "sale_price": "",  # Clear any leftover sale price in WooCommerce
             "description": odoo_product.get("description") or "",
             "short_description": odoo_product.get("description_sale") or "",
             "manage_stock": False if product_type == "variable" else True,

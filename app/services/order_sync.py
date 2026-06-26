@@ -343,10 +343,10 @@ class OrderSyncService:
                     sku=sku,
                     product_name=item.name,
                 )
-                raise ValueError(
-                    f"SKU '{sku}' not found in product mappings. "
-                    "Ensure the product is synced before processing orders."
-                )
+                # Skip unmapped lines rather than aborting the whole order.
+                # The order will still be created with the lines that DO map.
+                # A warning is logged so the operator can investigate.
+                continue
 
             # Build order line values
             line_values = {
@@ -364,19 +364,19 @@ class OrderSyncService:
         """
         Find the Odoo product.product ID for a given SKU.
 
-        Checks VariantMapping first (for variants), then ProductMapping
-        (for simple products — falls back to finding the single variant).
+        Priority:
+        1. VariantMapping table (for variable product variants)
+        2. ProductMapping table + Odoo lookup (for simple products)
+        3. Direct Odoo search by SKU (fallback when local DB has no mapping yet)
         """
-        # Check variant mapping first
+        # 1. Check variant mapping first
         variant_mapping = self.variant_repo.get_by_sku(sku)
         if variant_mapping:
             return variant_mapping.odoo_variant_id
 
-        # Check product mapping (simple products)
+        # 2. Check product mapping (simple products)
         product_mapping = self.product_repo.get_by_sku(sku)
         if product_mapping:
-            # For sale.order.line, we need product.product ID, not product.template ID
-            # Simple products have one variant with the same SKU
             variants = self.odoo.search_read(
                 "product.product",
                 [["product_tmpl_id", "=", product_mapping.odoo_product_id]],
@@ -385,7 +385,25 @@ class OrderSyncService:
             )
             if variants:
                 return variants[0]["id"]
-            return None
+
+        # 3. Fallback: search Odoo directly by default_code (SKU)
+        # Handles products synced before DB was populated or after a DB reset
+        try:
+            odoo_variants = self.odoo.search_read(
+                "product.product",
+                [["default_code", "=", sku], ["active", "=", True]],
+                fields=["id", "product_tmpl_id"],
+                limit=1,
+            )
+            if odoo_variants:
+                logger.info(
+                    "order_line_sku_found_in_odoo_direct",
+                    sku=sku,
+                    odoo_variant_id=odoo_variants[0]["id"],
+                )
+                return odoo_variants[0]["id"]
+        except Exception as e:
+            logger.warning("order_line_odoo_sku_lookup_failed", sku=sku, error=str(e))
 
         return None
 

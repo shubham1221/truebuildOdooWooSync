@@ -178,7 +178,8 @@ class VariantSyncService:
         # Build WooCommerce variation data
         woo_variation_data: dict[str, Any] = {
             "sku": sku,
-            "regular_price": str(price),
+            "regular_price": f"{price:.2f}",
+            "sale_price": "",  # Clear any leftover sale price in WooCommerce
             "manage_stock": True,
             "stock_quantity": int(variant_data.get("qty_available", 0)),
             "attributes": attribute_values,

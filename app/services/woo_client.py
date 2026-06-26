@@ -484,6 +484,28 @@ class WooCommerceClient:
             "stock_quantity": stock_quantity,
         })
 
+    # ── Webhook Management ───────────────────────────────────────────────
+
+    def list_webhooks(self, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """List all WooCommerce webhooks."""
+        return self.get_all("webhooks", params=params)
+
+    def get_webhook(self, webhook_id: int) -> dict[str, Any]:
+        """Get a single WooCommerce webhook by ID."""
+        return self.get(f"webhooks/{webhook_id}")
+
+    def update_webhook(self, webhook_id: int, data: dict[str, Any]) -> dict[str, Any]:
+        """Update a WooCommerce webhook (e.g. change delivery_url)."""
+        result = self.put(f"webhooks/{webhook_id}", data)
+        logger.info("woo_webhook_updated", webhook_id=webhook_id)
+        return result
+
+    def create_webhook(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a new WooCommerce webhook."""
+        result = self.post("webhooks", data)
+        logger.info("woo_webhook_created", webhook_id=result.get("id"), topic=data.get("topic"))
+        return result
+
     # ── Health Check ─────────────────────────────────────────────────────
 
     def check_connection(self) -> dict[str, Any]:
