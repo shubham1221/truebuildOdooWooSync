@@ -56,15 +56,23 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      WEBHOOK_BASE_URL: https://api.truebuilddecks.com.au
     ports:
       - "8000:8000"
     volumes:
       - ./logs:/app/logs
     # Run alembic migrations automatically before starting the API server.
-    # This ensures all tables exist on every deploy without manual steps.
     command: >
       sh -c "alembic upgrade head &&
              uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4"
+    # Traefik labels — routes https://api.truebuilddecks.com.au → port 8000
+    # Traefik runs in network_mode:host so it reaches the API via 127.0.0.1:8000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.truebuild-api.rule=Host(`api.truebuilddecks.com.au`)"
+      - "traefik.http.routers.truebuild-api.entrypoints=websecure"
+      - "traefik.http.routers.truebuild-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.truebuild-api.loadbalancer.server.url=http://127.0.0.1:8000"
     depends_on:
       postgres:
         condition: service_healthy
