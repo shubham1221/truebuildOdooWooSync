@@ -56,6 +56,7 @@ class OrderSyncData(BaseModel):
     billing_country: str = "AU"
     shipping_first_name: str = ""
     shipping_last_name: str = ""
+    shipping_phone: str = ""
     shipping_company: str = ""
     shipping_address_1: str = ""
     shipping_address_2: str = ""

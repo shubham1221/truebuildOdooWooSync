@@ -197,6 +197,7 @@ class OrderSyncService:
                 state=order_data.shipping_state,
                 postcode=order_data.shipping_postcode,
                 country=order_data.shipping_country,
+                phone=order_data.shipping_phone,
             )
 
             address_result: PartnerAddressResult = (
@@ -435,6 +436,7 @@ class OrderSyncService:
             billing_country=billing.get("country", "AU"),
             shipping_first_name=shipping.get("first_name", ""),
             shipping_last_name=shipping.get("last_name", ""),
+            shipping_phone=shipping.get("phone", ""),
             shipping_company=shipping.get("company", ""),
             shipping_address_1=shipping.get("address_1", ""),
             shipping_address_2=shipping.get("address_2", ""),

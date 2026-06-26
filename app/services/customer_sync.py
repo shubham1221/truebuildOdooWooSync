@@ -156,6 +156,7 @@ class CustomerSyncService:
                 email=email,
                 odoo_partner_id=mapping.odoo_partner_id,
             )
+            self._clear_parent_address(mapping.odoo_partner_id)
             return mapping.odoo_partner_id
 
         # 2. Search Odoo by email (type=contact only)
@@ -183,6 +184,7 @@ class CustomerSyncService:
                 direction="woo_to_odoo",
                 message=f"Matched existing Odoo partner {partner_id}",
             )
+            self._clear_parent_address(partner_id)
             return partner_id
 
         # 3. Create new parent partner in Odoo
@@ -209,6 +211,34 @@ class CustomerSyncService:
             message=f"Created new Odoo partner {partner_id} for {email}",
         )
         return partner_id
+
+    def _clear_parent_address(self, partner_id: int) -> None:
+        """Clear address fields on the parent contact in Odoo.
+
+        This ensures Odoo only displays the customer name (without address block)
+        in the Customer field of Sale Orders.
+        """
+        try:
+            self.odoo.write(
+                "res.partner",
+                [partner_id],
+                {
+                    "street": False,
+                    "street2": False,
+                    "city": False,
+                    "state_id": False,
+                    "zip": False,
+                    "country_id": False,
+                },
+            )
+            logger.info("parent_address_cleared", partner_id=partner_id)
+        except Exception as e:
+            logger.warning(
+                "failed_to_clear_parent_address",
+                partner_id=partner_id,
+                error=str(e),
+            )
+
 
     def _create_parent(self, customer: CustomerData) -> int:
         """Create a new parent res.partner (type=contact) in Odoo."""
