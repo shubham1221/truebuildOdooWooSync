@@ -53,10 +53,13 @@ async def _validate_and_parse(
             raise HTTPException(status_code=401, detail=str(e))
 
     # Parse the validated payload
+    # Return empty dict for empty/non-JSON bodies (e.g. WooCommerce test pings)
+    if not raw_body:
+        return {}
     try:
         payload = json.loads(raw_body)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        return {}
 
     return payload
 
