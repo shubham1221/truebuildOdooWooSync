@@ -91,7 +91,7 @@ class ProductMapping(Base):
     sku = Column(String(255), nullable=False, unique=True, index=True)
     product_type = Column(String(50), nullable=False, default="simple")  # simple | variable
     sync_status = Column(
-        Enum(SyncStatus, name="sync_status_enum"),
+        Enum(SyncStatus, name="sync_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=SyncStatus.PENDING,
     )
@@ -126,7 +126,7 @@ class VariantMapping(Base):
     woo_variant_id = Column(Integer, nullable=True, unique=True, index=True)
     sku = Column(String(255), nullable=False, unique=True, index=True)
     sync_status = Column(
-        Enum(SyncStatus, name="sync_status_enum", create_type=False),
+        Enum(SyncStatus, name="sync_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=SyncStatus.PENDING,
     )
@@ -176,7 +176,7 @@ class OrderMapping(Base):
     order_number = Column(String(100), nullable=True, index=True)
     odoo_invoice_id = Column(Integer, nullable=True)
     status = Column(
-        Enum(OrderStatus, name="order_status_enum"),
+        Enum(OrderStatus, name="order_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=OrderStatus.PENDING,
     )
@@ -209,7 +209,7 @@ class SyncLog(Base):
     entity_id = Column(String(100), nullable=True)  # SKU or ID
     direction = Column(String(20), nullable=False, default="odoo_to_woo")  # odoo_to_woo | woo_to_odoo
     status = Column(
-        Enum(SyncLogStatus, name="sync_log_status_enum"),
+        Enum(SyncLogStatus, name="sync_log_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=SyncLogStatus.SUCCESS,
     )
@@ -246,7 +246,7 @@ class FailedJob(Base):
     max_retries = Column(Integer, nullable=False, default=4)
     next_retry_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(
-        Enum(FailedJobStatus, name="failed_job_status_enum"),
+        Enum(FailedJobStatus, name="failed_job_status_enum", create_type=False, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
         default=FailedJobStatus.PENDING,
     )
